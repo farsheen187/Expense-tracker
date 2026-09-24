@@ -82,13 +82,27 @@ TEMPLATES = [
 WSGI_APPLICATION = "expense_tracker.wsgi.application"
 
 # Database: SQLite locally; Postgres via DATABASE_URL on Render
+_db_url = os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
 DATABASES = {
-    "default": dj_database_url.config(
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+    "default": dj_database_url.parse(
+        _db_url,
         conn_max_age=600,
         conn_health_checks=True,
     )
 }
+
+# Avoid hard-failing health checks before TLS is ready on some free-tier boots
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # Default False so first deploy/health checks are less brittle; set True in env if desired
+    SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -152,14 +166,3 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Backend API for expense tracking — auth, categories, transactions, budgets, reports.",
     "VERSION": "1.0.0",
 }
-
-# Production hardening when DEBUG is off
-if not DEBUG:
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
