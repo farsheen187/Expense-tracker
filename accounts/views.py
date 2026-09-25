@@ -26,5 +26,7 @@ class RegisterView(generics.CreateAPIView):
 
 
 class MeView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+
     def get(self, request):
         return Response(UserSerializer(request.user).data)

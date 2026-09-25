@@ -4,6 +4,7 @@ from django.db.models import Sum
 from rest_framework import serializers
 
 from .models import Budget, Category, Transaction
+from .public_user import get_public_user
 
 
 def money(value) -> str:
@@ -41,15 +42,14 @@ class TransactionSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at", "updated_at", "category_name")
 
     def validate(self, attrs):
-        request = self.context["request"]
-        user = request.user
+        user = get_public_user()
         category = attrs.get("category") or getattr(self.instance, "category", None)
         tx_type = attrs.get("type") or getattr(self.instance, "type", None)
 
         if category is not None:
             if category.user_id != user.id:
                 raise serializers.ValidationError(
-                    {"category": "Category not found or does not belong to you."}
+                    {"category": "Category not found."}
                 )
             if tx_type is not None and category.type != tx_type:
                 raise serializers.ValidationError(
@@ -92,13 +92,13 @@ class BudgetSerializer(serializers.ModelSerializer):
         )
 
     def validate_category(self, category):
-        user = self.context["request"].user
+        user = get_public_user()
         if category.user_id != user.id:
-            raise serializers.ValidationError(
-                "Category not found or does not belong to you."
-            )
+            raise serializers.ValidationError("Category not found.")
         if category.type != Category.Type.EXPENSE:
-            raise serializers.ValidationError("Budgets can only be set for expense categories.")
+            raise serializers.ValidationError(
+                "Budgets can only be set for expense categories."
+            )
         return category
 
     def _spent_for(self, obj):

@@ -5,11 +5,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db.models import Sum
 from django.db.models.functions import TruncMonth
 from rest_framework import status, viewsets
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Budget, Category, Transaction
+from .public_user import get_public_user
 from .serializers import BudgetSerializer, CategorySerializer, TransactionSerializer
 
 
@@ -22,22 +23,21 @@ def money(value) -> str:
     return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-
 class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (AllowAny,)
     search_fields = ("name",)
     ordering_fields = ("name", "type", "created_at")
 
     def get_queryset(self):
-        qs = Category.objects.filter(user=self.request.user)
+        qs = Category.objects.filter(user=get_public_user())
         cat_type = self.request.query_params.get("type")
         if cat_type in (Category.Type.INCOME, Category.Type.EXPENSE):
             qs = qs.filter(type=cat_type)
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(user=get_public_user())
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -56,12 +56,14 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
 class TransactionViewSet(viewsets.ModelViewSet):
     serializer_class = TransactionSerializer
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (AllowAny,)
     search_fields = ("note",)
     ordering_fields = ("date", "amount", "created_at")
 
     def get_queryset(self):
-        qs = Transaction.objects.filter(user=self.request.user).select_related("category")
+        qs = Transaction.objects.filter(user=get_public_user()).select_related(
+            "category"
+        )
         params = self.request.query_params
 
         tx_type = params.get("type")
@@ -87,16 +89,16 @@ class TransactionViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(user=get_public_user())
 
 
 class BudgetViewSet(viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (AllowAny,)
     ordering_fields = ("year", "month", "limit_amount")
 
     def get_queryset(self):
-        qs = Budget.objects.filter(user=self.request.user).select_related("category")
+        qs = Budget.objects.filter(user=get_public_user()).select_related("category")
         params = self.request.query_params
         month = params.get("month")
         year = params.get("year")
@@ -107,11 +109,11 @@ class BudgetViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(user=get_public_user())
 
 
 class SummaryReportView(APIView):
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (AllowAny,)
 
     def get(self, request):
         today = date.today()
@@ -130,7 +132,7 @@ class SummaryReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user = request.user
+        user = get_public_user()
         _, last_day = monthrange(year, month)
         start = date(year, month, 1)
         end = date(year, month, last_day)
@@ -204,7 +206,7 @@ class SummaryReportView(APIView):
 
 
 class MonthlyReportView(APIView):
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (AllowAny,)
 
     def get(self, request):
         try:
@@ -217,7 +219,6 @@ class MonthlyReportView(APIView):
         months = max(1, min(months, 24))
 
         today = date.today()
-        # Go back (months - 1) months from current month
         start_month = today.month - (months - 1)
         start_year = today.year
         while start_month <= 0:
@@ -226,14 +227,13 @@ class MonthlyReportView(APIView):
         start = date(start_year, start_month, 1)
 
         qs = (
-            Transaction.objects.filter(user=request.user, date__gte=start)
+            Transaction.objects.filter(user=get_public_user(), date__gte=start)
             .annotate(period=TruncMonth("date"))
             .values("period", "type")
             .annotate(total=Sum("amount"))
             .order_by("period")
         )
 
-        # Build ordered month keys
         series_map = {}
         y, m = start_year, start_month
         for _ in range(months):

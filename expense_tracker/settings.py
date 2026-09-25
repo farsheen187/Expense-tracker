@@ -129,21 +129,32 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# CORS
-CORS_ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
-    if o.strip()
-]
-CORS_ALLOW_CREDENTIALS = True
+# CORS — public frontend may be on any origin during development
+_cors_all = os.environ.get("CORS_ALLOW_ALL_ORIGINS", "True").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+if _cors_all:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = False
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOW_CREDENTIALS = True
+    CORS_ALLOWED_ORIGINS = [
+        o.strip()
+        for o in os.environ.get(
+            "CORS_ALLOWED_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173",
+        ).split(",")
+        if o.strip()
+    ]
 
-# DRF
+# DRF — Expense Tracker APIs are public (no JWT required)
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-    ),
+    "DEFAULT_AUTHENTICATION_CLASSES": (),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
+        "rest_framework.permissions.AllowAny",
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
