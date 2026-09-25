@@ -84,11 +84,12 @@ WSGI_APPLICATION = "expense_tracker.wsgi.application"
 
 def _normalize_database_url(url: str) -> str:
     """
-    Fix common malformed Render DATABASE_URL values where the '@'
-    before the hostname was lost during paste, e.g.:
-      postgresql://user:passworddpg-xxxxx/dbname
-    becomes:
-      postgresql://user:password@dpg-xxxxx/dbname
+    Fix common malformed Render DATABASE_URL paste mistakes:
+    1) Missing '@' before host:
+         postgresql://user:passworddpg-xxxxx/dbname
+    2) Password placed where the port should be:
+         postgresql://user@dpg-xxxxx:PASSWORD/dbname
+       → postgresql://user:PASSWORD@dpg-xxxxx/dbname
     """
     import re
     from urllib.parse import quote, urlparse, urlunparse
@@ -96,10 +97,22 @@ def _normalize_database_url(url: str) -> str:
     if not url or "://" not in url:
         return url
 
+    # Case 2: user@host:non-numeric-port/db  (password stuck in port slot)
+    swapped = re.match(
+        r"^(postgres(?:ql)?://)([^:/@]+)@([a-z0-9.-]+):([^/]+)(/.*)?$",
+        url,
+        re.IGNORECASE,
+    )
+    if swapped:
+        scheme, user, host, password, path = swapped.groups()
+        if not password.isdigit():
+            url = f"{scheme}{user}:{password}@{host}{path or ''}"
+
     scheme, rest = url.split("://", 1)
     if "@" not in rest:
+        # Case 1: missing @ before dpg- host
         match = re.match(
-            r"^([^:]+):(.+?)(dpg-[a-z0-9-]+)(/.*)?$",
+            r"^([^:]+):(.+?)(dpg-[a-z0-9.-]+)(/.*)?$",
             rest,
             re.IGNORECASE,
         )
@@ -109,22 +122,31 @@ def _normalize_database_url(url: str) -> str:
             url = f"{scheme}://{rest}"
 
     # Percent-encode password if it contains reserved characters
-    parsed = urlparse(url)
-    if parsed.password and any(c in parsed.password for c in "@:#/?%"):
-        user = quote(parsed.username or "", safe="")
-        password = quote(parsed.password, safe="")
-        host = parsed.hostname or ""
-        port = f":{parsed.port}" if parsed.port else ""
-        netloc = f"{user}:{password}@{host}{port}"
-        url = urlunparse(
-            (
-                parsed.scheme,
-                netloc,
-                parsed.path,
-                parsed.params,
-                parsed.query,
-                parsed.fragment,
+    try:
+        parsed = urlparse(url)
+        if parsed.password and any(c in parsed.password for c in "@:#/?%"):
+            user = quote(parsed.username or "", safe="")
+            password = quote(parsed.password, safe="")
+            host = parsed.hostname or ""
+            port = f":{parsed.port}" if parsed.port else ""
+            netloc = f"{user}:{password}@{host}{port}"
+            url = urlunparse(
+                (
+                    parsed.scheme,
+                    netloc,
+                    parsed.path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment,
+                )
             )
+    except ValueError:
+        # Last resort: strip a non-numeric :port segment
+        url = re.sub(
+            r"@(dpg-[a-z0-9.-]+):[^/]+/",
+            r"@\1/",
+            url,
+            flags=re.IGNORECASE,
         )
     return url
 
