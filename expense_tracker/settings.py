@@ -129,17 +129,46 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
-# Database: SQLite locally; Postgres via DATABASE_URL on Render
-_db_url = _normalize_database_url(
-    os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
-)
-DATABASES = {
-    "default": dj_database_url.parse(
-        _db_url,
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
-}
+def _build_databases():
+    """Prefer discrete DB_* vars when set; otherwise DATABASE_URL / SQLite."""
+    db_host = os.environ.get("DB_HOST") or os.environ.get("PGHOST")
+    if db_host:
+        return {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.environ.get("DB_NAME")
+                or os.environ.get("PGDATABASE", ""),
+                "USER": os.environ.get("DB_USER") or os.environ.get("PGUSER", ""),
+                "PASSWORD": os.environ.get("DB_PASSWORD")
+                or os.environ.get("PGPASSWORD", ""),
+                "HOST": db_host,
+                "PORT": os.environ.get("DB_PORT")
+                or os.environ.get("PGPORT", "5432"),
+                "CONN_MAX_AGE": 600,
+                "CONN_HEALTH_CHECKS": True,
+            }
+        }
+
+    raw = os.environ.get("DATABASE_URL")
+    if raw:
+        return {
+            "default": dj_database_url.parse(
+                _normalize_database_url(raw),
+                conn_max_age=600,
+                conn_health_checks=True,
+            )
+        }
+
+    return {
+        "default": dj_database_url.parse(
+            f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
+    }
+
+
+DATABASES = _build_databases()
 
 # Avoid hard-failing health checks before TLS is ready on some free-tier boots
 if not DEBUG:
