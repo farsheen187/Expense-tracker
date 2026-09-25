@@ -81,8 +81,58 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "expense_tracker.wsgi.application"
 
+
+def _normalize_database_url(url: str) -> str:
+    """
+    Fix common malformed Render DATABASE_URL values where the '@'
+    before the hostname was lost during paste, e.g.:
+      postgresql://user:passworddpg-xxxxx/dbname
+    becomes:
+      postgresql://user:password@dpg-xxxxx/dbname
+    """
+    import re
+    from urllib.parse import quote, urlparse, urlunparse
+
+    if not url or "://" not in url:
+        return url
+
+    scheme, rest = url.split("://", 1)
+    if "@" not in rest:
+        match = re.match(
+            r"^([^:]+):(.+?)(dpg-[a-z0-9-]+)(/.*)?$",
+            rest,
+            re.IGNORECASE,
+        )
+        if match:
+            user, password, host, path = match.groups()
+            rest = f"{user}:{password}@{host}{path or ''}"
+            url = f"{scheme}://{rest}"
+
+    # Percent-encode password if it contains reserved characters
+    parsed = urlparse(url)
+    if parsed.password and any(c in parsed.password for c in "@:#/?%"):
+        user = quote(parsed.username or "", safe="")
+        password = quote(parsed.password, safe="")
+        host = parsed.hostname or ""
+        port = f":{parsed.port}" if parsed.port else ""
+        netloc = f"{user}:{password}@{host}{port}"
+        url = urlunparse(
+            (
+                parsed.scheme,
+                netloc,
+                parsed.path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+    return url
+
+
 # Database: SQLite locally; Postgres via DATABASE_URL on Render
-_db_url = os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
+_db_url = _normalize_database_url(
+    os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
+)
 DATABASES = {
     "default": dj_database_url.parse(
         _db_url,
