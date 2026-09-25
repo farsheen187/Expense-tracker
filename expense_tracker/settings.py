@@ -151,6 +151,68 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
+def _database_from_url(url: str) -> dict:
+    """Parse DATABASE_URL safely even when paste-mangled."""
+    import re
+    from urllib.parse import unquote
+
+    url = _normalize_database_url(url.strip().strip('"').strip("'"))
+
+    try:
+        return dj_database_url.parse(
+            url,
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
+    except ValueError:
+        pass
+
+    # user:password@host[/db] (ignore bogus port)
+    match = re.search(
+        r"postgres(?:ql)?://([^:]+):([^@]+)@([^:/]+)(?::[^/]*)?(?:/([^?\s]+))?",
+        url,
+        re.IGNORECASE,
+    )
+    if match:
+        user, password, host, name = match.groups()
+        return {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": unquote(name or ""),
+            "USER": unquote(user),
+            "PASSWORD": unquote(password),
+            "HOST": host,
+            "PORT": "5432",
+            "CONN_MAX_AGE": 600,
+            "CONN_HEALTH_CHECKS": True,
+        }
+
+    # user@host:password/db  (password in port slot)
+    match = re.search(
+        r"postgres(?:ql)?://([^@/]+)@([^:]+):([^/]+)/([^?\s]+)",
+        url,
+        re.IGNORECASE,
+    )
+    if match:
+        user, host, password, name = match.groups()
+        if not password.isdigit():
+            return {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": unquote(name),
+                "USER": unquote(user),
+                "PASSWORD": unquote(password),
+                "HOST": host,
+                "PORT": "5432",
+                "CONN_MAX_AGE": 600,
+                "CONN_HEALTH_CHECKS": True,
+            }
+
+    raise ValueError(
+        "DATABASE_URL is malformed. Re-copy the Internal Database URL from Render "
+        "Postgres (must look like postgresql://USER:PASSWORD@HOST/DBNAME), "
+        "or set DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT."
+    )
+
+
 def _build_databases():
     """Prefer discrete DB_* vars when set; otherwise DATABASE_URL / SQLite."""
     db_host = os.environ.get("DB_HOST") or os.environ.get("PGHOST")
@@ -173,13 +235,7 @@ def _build_databases():
 
     raw = os.environ.get("DATABASE_URL")
     if raw:
-        return {
-            "default": dj_database_url.parse(
-                _normalize_database_url(raw),
-                conn_max_age=600,
-                conn_health_checks=True,
-            )
-        }
+        return {"default": _database_from_url(raw)}
 
     return {
         "default": dj_database_url.parse(
